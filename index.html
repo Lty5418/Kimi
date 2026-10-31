@@ -140,6 +140,16 @@
   #ask .acts button:active{transform:scale(.96)}
   #askNo{background:var(--chip);color:var(--fg)}
   #askYes{background:var(--chipOn);color:var(--chipOnFg)}
+  /* 平台选择：两个卡片单选，默认高亮当前平台 */
+  #ask .plat{display:flex;flex-direction:column;gap:8px;margin:0 0 18px}
+  .pbtn{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;
+    border:1.5px solid var(--cardBorder);background:var(--chip);color:var(--fg);
+    font:inherit;text-align:left;padding:11px 14px;border-radius:12px;cursor:pointer;
+    transition:border-color .2s, background .2s, transform .16s}
+  .pbtn:active{transform:scale(.985)}
+  .pbtn b{font-size:14px;font-weight:600}
+  .pbtn span{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pbtn.on{border-color:var(--chipOn);background:color-mix(in srgb, var(--chipOn) 12%, var(--chip))}
   #ask .prog{margin:0 0 18px}
   #ask .bar{height:5px;border-radius:3px;background:var(--chip);overflow:hidden}
   #ask .bar i{display:block;height:100%;width:0;border-radius:3px;background:var(--chipOn);
@@ -229,15 +239,15 @@
     </div>
     <div class="sec dlsec">
       <div class="crow">
-        <button class="dlbtn" id="dlBtn" aria-label="下载 APK 桌宠">
+        <button class="dlbtn" id="dlBtn" aria-label="下载桌宠">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>
           </svg>
         </button>
-        <span class="dltxt">下载 APK 桌宠</span>
+        <span class="dltxt">下载桌宠</span>
       </div>
-      <p class="secnote">安卓悬浮窗版本，约 101 KB</p>
+      <p class="secnote">安卓 APK 悬浮窗版 · Windows 桌面宠物</p>
     </div>
     <div class="foot"><button class="back" id="backBtn">返回</button></div>
   </div>
@@ -245,10 +255,20 @@
 
 <div id="ask" inert aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="askT">
   <div class="box">
-    <h4 id="askT">下载 APK 桌宠</h4>
+    <h4 id="askT">下载桌宠</h4>
     <div id="askBody">
-      <p class="askmsg">是否要下载 <b>APK 桌宠</b>？<br>安卓悬浮窗版本，约 101 KB。</p>
+      <p class="askmsg">是否要下载<b>桌宠</b>？请选择平台：</p>
+      <div class="plat" role="radiogroup" aria-label="选择平台">
+        <button class="pbtn" id="pApk" role="radio" aria-checked="false">
+          <b>安卓 APK</b><span id="apkMeta">悬浮窗版</span>
+        </button>
+        <button class="pbtn" id="pExe" role="radio" aria-checked="false">
+          <b>Windows 桌面宠物</b><span id="exeMeta">读取信息中…</span>
+        </button>
+      </div>
     </div>
+    <!-- 提示层单独放，不销毁上面的节点 —— 否则平台按钮的引用会失效 -->
+    <div class="prog" id="dlProg" hidden><p class="ptxt">正在打开下载…</p></div>
     <div class="acts">
       <button id="askNo">取消</button>
       <button id="askYes">确认下载</button>
@@ -1506,21 +1526,63 @@ window.addEventListener('keydown',e=>{
   if(ask.classList.contains('open')) closeAsk(); else closePanel();
 });
 
-/* ---------------- 下载 APK 桌宠 ---------------- */
-/* 用 raw 源而不是 blob 页面：blob 页是 HTML，直接下载会拿到网页而不是 apk */
-const APK_URL='https://raw.githubusercontent.com/Lty5418/Kimi/main/KimiFloat-1.8-debug.apk';
-const APK_NAME='KimiFloat-1.8-debug.apk';
+/* ---------------- 下载桌宠（安卓 APK / Windows exe） ---------------- */
+/* 两条硬规则（服务端明确要求，务必保留）：
+   1. sharecode 是网关凭证，不能省，省了就是 403
+   2. exe 有 249 MB —— 绝对不要 fetch 二进制再转 blob，浏览器内存会顶爆。
+      下载动作一律交给浏览器原生处理，fetch 只用来读 /api/info 的 JSON。 */
+const APK_URL='https://a3992a59d784a582d.app.workbuddy.host/?sharecode=55QBUPRKGH';
+const EXE_API='https://kimi-pet-download.app.workbuddy.host';
+const EXE_Q='?sharecode=5YU4WYVILU';
+const EXE_FALLBACK=EXE_API+'/download'+EXE_Q;   // info 拉不到时的兜底地址
 
 const ask=document.getElementById('ask');
 const askBody=document.getElementById('askBody');
 const askNo=document.getElementById('askNo');
 const askYes=document.getElementById('askYes');
 const dlBtn=document.getElementById('dlBtn');
-const ASK_HTML=askBody.innerHTML;      // 原始文案，下载结束后还原
-let askBusy=false;
+const pApk=document.getElementById('pApk');
+const pExe=document.getElementById('pExe');
+const apkMeta=document.getElementById('apkMeta');
+const exeMeta=document.getElementById('exeMeta');
+const dlProg=document.getElementById('dlProg');
+let askBusy=false, plat='apk', exeUrl=EXE_FALLBACK;
+
+/* 平台默认按 UA 猜一个，用户仍然可以手动切换 */
+function guessPlat(){
+  const ua=navigator.userAgent;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ? 'apk' : 'exe';
+}
+function setPlat(p){
+  plat=p;
+  pApk.classList.toggle('on', p==='apk');
+  pExe.classList.toggle('on', p==='exe');
+  pApk.setAttribute('aria-checked', p==='apk'?'true':'false');
+  pExe.setAttribute('aria-checked', p==='exe'?'true':'false');
+}
+
+/* exe 元信息：只读 JSON（几百字节），拿到体积/版本/真实下载地址。
+   endpoints 里给了三个等价地址，优先用服务端返回的，拉不到就用兜底。 */
+let exeInfoDone=false;
+async function loadExeInfo(){
+  if(exeInfoDone) return;
+  exeInfoDone=true;
+  try{
+    const r=await fetch(EXE_API+'/api/info'+EXE_Q, {mode:'cors', cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d=await r.json();
+    if(d.download_url) exeUrl=d.download_url;
+    else if(d.endpoints && d.endpoints.length) exeUrl=d.endpoints[0];
+    exeMeta.textContent=[d.size_human, d.version?('v'+d.version):''].filter(Boolean).join(' · ') || 'Windows 版';
+  }catch(e){
+    exeMeta.textContent='Windows 版';
+  }
+}
 
 function openAsk(){
   if(askBusy) return;
+  setPlat(guessPlat());
+  loadExeInfo();
   ask.classList.add('open');
   ask.removeAttribute('inert'); ask.setAttribute('aria-hidden','false');
   askYes.focus();
@@ -1529,54 +1591,37 @@ function closeAsk(force){
   if(askBusy && !force) return;
   ask.classList.remove('open');
   ask.setAttribute('inert',''); ask.setAttribute('aria-hidden','true');
-  setTimeout(()=>{ askBody.innerHTML=ASK_HTML; askNo.disabled=false; askYes.disabled=false; },320);
 }
 dlBtn.addEventListener('pointerdown',e=>e.stopPropagation());
 dlBtn.addEventListener('click',openAsk);
 askNo.addEventListener('click',()=>closeAsk());
-function saveBlob(blob){
-  const u=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=u; a.download=APK_NAME;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(u),5000);
-}
-const fmtB=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB';
+pApk.addEventListener('click',()=>setPlat('apk'));
+pExe.addEventListener('click',()=>setPlat('exe'));
 
-async function doDownload(){
+function doDownload(){
   if(askBusy) return;
   askBusy=true; askNo.disabled=true; askYes.disabled=true;
-  askBody.innerHTML='<div class="prog"><div class="bar"><i id="dlBar"></i></div>'
-    +'<p class="ptxt" id="dlTxt">准备中…</p></div>';
-  const bar=document.getElementById('dlBar'), txt=document.getElementById('dlTxt');
-  try{
-    const res=await fetch(APK_URL,{mode:'cors'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const total=+(res.headers.get('content-length')||0);
-    if(res.body && total){
-      const rd=res.body.getReader(), parts=[]; let got=0;
-      for(;;){
-        const r=await rd.read();
-        if(r.done) break;
-        parts.push(r.value); got+=r.value.length;
-        bar.style.width=(got/total*100).toFixed(1)+'%';
-        txt.textContent='已下载 '+fmtB(got)+' / '+fmtB(total);
-      }
-      saveBlob(new Blob(parts));
-    }else{
-      txt.textContent='下载中…';
-      saveBlob(await res.blob());
+  const url = plat==='apk' ? APK_URL : exeUrl;
+  // 只切换显示，不替换 innerHTML —— 平台按钮的节点必须留着
+  askBody.hidden=true; dlProg.hidden=false;
+  /* exe 是 attachment 响应，用 location.href 浏览器会直接下载且留在当前页；
+     APK 那个是落地页，放新标签打开，免得把正在玩的小球顶掉。 */
+  if(plat==='apk'){
+    const w=window.open(url,'_blank','noopener');
+    if(!w){                       // 被拦截就直接跳
+      const a=document.createElement('a');
+      a.href=url; a.target='_blank'; a.rel='noopener';
+      document.body.appendChild(a); a.click(); a.remove();
     }
-    bar.style.width='100%'; txt.textContent='已开始下载 ✓';
-    askBusy=false; setTimeout(()=>closeAsk(true),800);
-  }catch(err){
-    /* 拿不到流（跨域 / 网络受限）就退回浏览器直接打开，至少不会卡死在弹窗里 */
-    txt.textContent='改由浏览器下载…';
-    const a=document.createElement('a');
-    a.href=APK_URL; a.target='_blank'; a.rel='noopener';
-    document.body.appendChild(a); a.click(); a.remove();
-    askBusy=false; setTimeout(()=>closeAsk(true),1200);
+  }else{
+    location.href=url;
   }
+  askBusy=false;
+  setTimeout(()=>{
+    closeAsk(true);
+    askBody.hidden=false; dlProg.hidden=true;
+    askNo.disabled=false; askYes.disabled=false;
+  },700);
 }
 askYes.addEventListener('click',doDownload);
 
