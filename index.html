@@ -19,7 +19,9 @@
     --card:#1d2431; --cardBorder:rgba(255,255,255,.10); --cardShadow:rgba(0,0,0,.42);
     --chip:#262f3e; --chipOn:#5a95e0; --chipOnFg:#ffffff;
   }
-  #stage{display:block;position:fixed;inset:0}
+  /* 提升到独立合成层：画布内容直接作为 GPU 纹理参与合成，不参与主线程的层树重绘 */
+  #stage{display:block;position:fixed;inset:0;z-index:1;
+    transform:translateZ(0);will-change:transform;contain:strict}
   .hint{position:fixed;bottom:24px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.04em;
     color:var(--muted);pointer-events:none;padding:0 20px;line-height:1.6;z-index:2}
 
@@ -31,17 +33,39 @@
   #gear:active{transform:scale(.92) rotate(-25deg)}
   #gear svg{width:22px;height:22px}
 
-  /* 设置界面 */
-  #panel{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
-    background:var(--bg);opacity:0;pointer-events:none;
-    transition:opacity .32s cubic-bezier(.22,1,.36,1)}
-  #panel.open{opacity:1;pointer-events:auto}
-  #panel .sheet{width:min(560px,92vw);max-height:86vh;overflow-y:auto;
-    transform:translateY(20px) scale(.97);opacity:0;
-    transition:transform .38s cubic-bezier(.22,1,.36,1), opacity .28s ease}
-  #panel.open .sheet{transform:none;opacity:1}
+  /* 设置面板：桌面右侧抽屉 / 手机底部半屏 sheet。
+     关键是 #panel 本身 pointer-events:none —— 面板外的区域不做拦截，
+     所以调色时左侧/上方的 Kimi 一直露着，还能顺手戳一下。 */
+  #panel{position:fixed;inset:0;z-index:10;display:flex;pointer-events:none;opacity:0;
+    align-items:flex-end;justify-content:center;
+    transition:opacity .30s cubic-bezier(.22,1,.36,1), visibility 0s linear .30s}
+  #panel.open{opacity:1;visibility:visible;transition:opacity .30s cubic-bezier(.22,1,.36,1)}
+  #panel:not(.open){visibility:hidden}
+  #panel .sheet{pointer-events:auto;background:var(--card);overflow-y:auto;
+    width:100%;max-height:62vh;border-radius:20px 20px 0 0;
+    padding:20px 18px calc(18px + env(safe-area-inset-bottom,0px));
+    transform:translateY(100%);
+    border-top:1px solid var(--cardBorder);
+    box-shadow:0 -8px 40px var(--cardShadow);
+    transition:transform .38s cubic-bezier(.22,1,.36,1)}
+  #panel.open .sheet{transform:none}
+  @media (min-width:768px) and (orientation:landscape){
+    #panel{align-items:stretch;justify-content:flex-end}
+    #panel .sheet{width:min(400px,84vw);height:100vh;max-height:100vh;
+      border-radius:20px 0 0 20px;transform:translateX(100%);
+      padding:26px 24px;border:0;border-left:1px solid var(--cardBorder);
+      box-shadow:-8px 0 40px var(--cardShadow)}
+  }
+
 
   .sheet h2{margin:0 0 4px;font-size:21px;font-weight:600}
+  /* 光晕层：三个大圆交给 DOM + CSS 合成，不进 canvas 主循环。
+     原来每帧在 canvas 里填充三个大半径半透明渐变，是最大的性能瓶颈。 */
+  #halos{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  #halos i{position:absolute;left:0;top:0;border-radius:50%;display:block;
+    will-change:transform;backface-visibility:hidden;transform-origin:50% 50%;
+    contain:layout paint size}
+  #haloBg{position:fixed;inset:0;z-index:-1}
   .sheet .sub{margin:0 0 26px;font-size:12.5px;color:var(--muted)}
   .sec{margin-bottom:26px}
   .sec h3{margin:0 0 12px;font-size:12px;font-weight:600;letter-spacing:.08em;color:var(--muted)}
@@ -70,16 +94,63 @@
   input[type=range].sat::-webkit-slider-runnable-track{background:var(--satTrack,#ddd)}
   input[type=range].lit::-webkit-slider-runnable-track{background:var(--litTrack,#ddd)}
   .pv{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  /* 文案输入：三条，分别对应「狂点」时弹出的三句话 */
+  .txt{width:100%;box-sizing:border-box;margin-bottom:10px;padding:9px 12px;
+    border:1px solid var(--cardBorder);border-radius:10px;background:var(--chip);
+    color:var(--fg);font:inherit;font-size:13px}
+  .txt:focus{outline:2px solid var(--chipOn);outline-offset:1px}
+  .secnote{margin:-4px 0 12px;font-size:11.5px;color:var(--muted);line-height:1.5}
   .pv.hsl{margin-right:auto}
   .foot{margin-top:8px}
   .back{border:0;background:var(--chip);color:var(--fg);font:inherit;font-size:14px;
     padding:12px 26px;border-radius:12px;cursor:pointer;transition:transform .18s}
   .back:active{transform:scale(.96)}
+
+  /* 下载 APK：设置面板底部的圆形按钮 */
+  .dlsec .crow{margin-bottom:8px}
+  .dlbtn{width:52px;height:52px;border-radius:50%;border:0;flex:none;
+    background:var(--chipOn);color:var(--chipOnFg);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    box-shadow:0 2px 10px var(--cardShadow);
+    transition:transform .18s cubic-bezier(.22,1,.36,1), opacity .2s}
+  .dlbtn:active{transform:scale(.9)}
+  .dlbtn[disabled]{opacity:.55;cursor:default}
+  .dlbtn svg{width:24px;height:24px}
+  .dltxt{font-size:13.5px;color:var(--fg)}
+
+  /* 自制确认弹窗：不用原生 confirm，样式跟页面统一。
+     关闭时 inert + visibility:hidden，否则 3 个按钮仍会被 Tab 聚焦。 */
+  #ask{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    padding:24px;opacity:0;pointer-events:none;
+    background:rgba(10,20,40,.34);backdrop-filter:blur(2px);
+    transition:opacity .26s cubic-bezier(.22,1,.36,1), visibility 0s linear .26s;
+    visibility:hidden}
+  #ask.open{opacity:1;pointer-events:auto;visibility:visible;transition:opacity .26s cubic-bezier(.22,1,.36,1)}
+  #ask .box{width:100%;max-width:330px;background:var(--card);border-radius:20px;
+    padding:24px 22px 18px;box-shadow:0 12px 48px var(--cardShadow);
+    transform:scale(.9) translateY(10px);opacity:0;
+    transition:transform .32s cubic-bezier(.22,1,.36,1), opacity .26s}
+  #ask.open .box{transform:none;opacity:1}
+  #ask h4{margin:0 0 10px;font-size:17px;font-weight:600;color:var(--fg)}
+  #ask .askmsg{margin:0 0 20px;font-size:13.5px;line-height:1.65;color:var(--muted)}
+  #ask .askmsg b{color:var(--fg);font-weight:600}
+  #ask .acts{display:flex;gap:10px}
+  #ask .acts button{flex:1;border:0;font:inherit;font-size:14px;padding:12px 0;
+    border-radius:12px;cursor:pointer;transition:transform .18s}
+  #ask .acts button:active{transform:scale(.96)}
+  #askNo{background:var(--chip);color:var(--fg)}
+  #askYes{background:var(--chipOn);color:var(--chipOnFg)}
+  #ask .prog{margin:0 0 18px}
+  #ask .bar{height:5px;border-radius:3px;background:var(--chip);overflow:hidden}
+  #ask .bar i{display:block;height:100%;width:0;border-radius:3px;background:var(--chipOn);
+    transition:width .2s ease-out}
+  #ask .ptxt{margin:9px 0 0;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
+<div id="halos" aria-hidden="true"><i></i><i></i><i></i></div>
 <canvas id="stage"></canvas>
-<div class="hint">按住任意处它会看你 · 狂点试试</div>
+<div class="hint">按住任意处它会看你 · 抓住它拖着甩出去 · 狂点试试</div>
 
 <button id="gear" aria-label="设置">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -89,7 +160,7 @@
   </svg>
 </button>
 
-<div id="panel">
+<div id="panel" inert aria-hidden="true">
   <div class="sheet">
     <h2>设置</h2>
     <p class="sub">调整 Kimi 的颜色与外观</p>
@@ -133,26 +204,105 @@
         <button data-theme="dark">深色</button>
       </div>
     </div>
+    <div class="sec">
+      <h3>大小与透明度</h3>
+      <div class="crow">
+        <span class="clab">大小</span>
+        <input type="range" id="sizeR" min="50" max="200" step="5" aria-label="主角大小">
+        <span class="cval" id="sizeV">100%</span>
+      </div>
+      <div class="crow">
+        <span class="clab">透明度</span>
+        <input type="range" id="alphaR" min="20" max="100" step="1" aria-label="主角透明度">
+        <span class="cval" id="alphaV">100%</span>
+      </div>
+    </div>
+    <div class="sec">
+      <h3>对话文案</h3>
+      <p class="secnote" id="lineHint">狂点时依次弹出这三句（当前：原版）</p>
+      <input type="text" class="txt" id="line0" maxlength="40" aria-label="第一句话">
+      <input type="text" class="txt" id="line1" maxlength="40" aria-label="第二句话">
+      <input type="text" class="txt" id="line2" maxlength="40" aria-label="第三句话">
+      <div class="crow">
+        <button class="mini" id="resetL">恢复默认</button>
+      </div>
+    </div>
+    <div class="sec dlsec">
+      <div class="crow">
+        <button class="dlbtn" id="dlBtn" aria-label="下载 APK 桌宠">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>
+          </svg>
+        </button>
+        <span class="dltxt">下载 APK 桌宠</span>
+      </div>
+      <p class="secnote">安卓悬浮窗版本，约 101 KB</p>
+    </div>
     <div class="foot"><button class="back" id="backBtn">返回</button></div>
+  </div>
+</div>
+
+<div id="ask" inert aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="askT">
+  <div class="box">
+    <h4 id="askT">下载 APK 桌宠</h4>
+    <div id="askBody">
+      <p class="askmsg">是否要下载 <b>APK 桌宠</b>？<br>安卓悬浮窗版本，约 101 KB。</p>
+    </div>
+    <div class="acts">
+      <button id="askNo">取消</button>
+      <button id="askYes">确认下载</button>
+    </div>
   </div>
 </div>
 
 <script>
 (function(){
 'use strict';
-const cv=document.getElementById('stage'), ctx=cv.getContext('2d');
+/* GPU 加速上下文：
+   desynchronized → 允许浏览器把绘制提交到 GPU 后不阻塞主线程（低延迟模式）
+   alpha:true     → 画布透明，让 DOM 光晕层从下面透上来（见 #halos）
+   不设 willReadFrequently → 否则 Chrome 会强制回退到 CPU 光栅化，白白丢掉 GPU */
+const cv=document.getElementById('stage');
+const ctx=cv.getContext('2d',{alpha:true, desynchronized:true, willReadFrequently:false});
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
 
+/* 自适应分辨率：手机 DPR3 的画布有 1170×2532 个像素，每帧全屏填充 + 合成，
+   光栅化量是 DPR2 的 2.25 倍 —— 这是中低端机上掉帧最大的单一因素。
+   画面主体是柔和渐变和大色块，2× 与 3× 的差别肉眼几乎看不出，
+   所以持续掉帧时把上限降到 2，换回一倍余量（只降一次，避免在临界点来回抖动）。 */
+let dprCap=3, dprSlow=0;
 let W=0,H=0,DPR=1,S=6;
+/* 大小倍率单独放一个变量：resize() 在脚本早期就被调用，那时 CFG 还没初始化，
+   直接用 CFG.sizeK 会撞 TDZ（Cannot access 'CFG' before initialization）。 */
+let SIZE_K=1;
 function resize(){
-  DPR=Math.max(1,Math.min(Math.round(window.devicePixelRatio||1),3));
+  DPR=Math.max(1,Math.min(Math.round(window.devicePixelRatio||1),dprCap));
   W=window.innerWidth;H=window.innerHeight;
   cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);
   cv.style.width=W+'px';cv.style.height=H+'px';
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  S=clamp(Math.round(Math.min(W,H)*0.44/24),3,26);
+  /* 主角大小分两套：手机竖屏按短边放大（原来只占屏宽 43%，太小），
+     横屏/桌面保持原来的桌面宠物尺寸。
+     位置放在 draw() 里更新 —— resize() 在脚本早期就被调用，那时 CFG 还没初始化。 */
+  const vmin=Math.min(W,H), k=SIZE_K;
+  S = (H>W) ? clamp(Math.round(vmin*0.60/24*k),6,Math.round(30*k))
+            : clamp(Math.round(vmin*0.44/24*k),3,Math.round(26*k));
+}
+/* 构图：竖屏主角居中偏上，横屏走三分法右下角。
+   面板打开时主角主动让位（竖屏上移、横屏左移），保证调色时它是完整露着的。
+   位置用缓动逼近目标，不会硬跳。 */
+let posXCur=null, posYCur=null;
+function applyLayout(){
+  const open=typeof panel!=='undefined' && panel.classList.contains('open');
+  let tX,tY,tBX,tBY;
+  if(H>W){ tX=0.50; tY=open?0.26:0.46; tBX=0.50; tBY=0.20; }   // 竖屏
+  else   { tX=open?0.42:2/3; tY=2/3; tBX=1/3; tBY=1/3; }        // 横屏/桌面
+  if(posXCur===null){ posXCur=tX; posYCur=tY; }
+  else { posXCur+=(tX-posXCur)*0.12; posYCur+=(tY-posYCur)*0.12; }
+  CFG.posX=posXCur; CFG.posY=posYCur; CFG.bubbleX=tBX; CFG.bubbleY=tBY;
 }
 window.addEventListener('resize',resize);resize();
 
@@ -220,17 +370,65 @@ let crabBreath=0;                  // 龙虾：呼吸缩放量
 const TH=()=>THEMES[theme];
 
 function hsl(h,s,l){ return 'hsl('+h+','+s+'%,'+l+'%)'; }
+/* SKIN 里的颜色可能是 hex（原版写死的）也可能是 hsl()（滑块生成的），
+   要加透明度就得先统一解出 rgb 三个分量。 */
+function toRGB(c){
+  if(c[0]==='#'){
+    let hx=c.slice(1);
+    if(hx.length===3) hx=hx.split('').map(ch=>ch+ch).join('');
+    const n=parseInt(hx,16);
+    return [(n>>16&255),(n>>8&255),(n&255)];
+  }
+  const m=c.match(/-?[\d.]+/g);
+  if(!m) return [255,255,255];
+  const h=+m[0], sa=+m[1]/100, l=+m[2]/100;
+  const k=n=>(n+h/30)%12, a=sa*Math.min(l,1-l);
+  const f=n=>Math.round(255*(l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1)))));
+  return [f(0),f(8),f(4)];
+}
+const rgba=(c,a)=>{ const v=toRGB(c); return 'rgba('+v[0]+','+v[1]+','+v[2]+','+a+')'; };
 let hueS=65, hueL=57, hueH=215;
 let fixedSkin=null;               // 非 null → 用写死的原版色值（用户一动取色器就清空）
 const cl=(v,a,b)=>Math.min(b,Math.max(a,v));
+/* HSL 的 L 是「数学均匀」的，不是人眼均匀：同样 L=57，绿色比蓝色亮 2.25 倍。
+   所以直接用 L 生成的配色，到了青/绿/橙这些色相上球就发白发浅。
+   解决办法：以原版配色五层的「感知亮度」为准，对每个色相反解出该用的 L。 */
+const SKIN_LUM=[0.2346,0.2905,0.3557,0.4656,0.5875];   // 原版五层实测感知亮度
+const SKIN_LRAT=SKIN_LUM.map(v=>v/SKIN_LUM[0]);        // 层间亮度比（与色相无关）
+const SKIN_SOFF=[0,3.9,8.4,12.4,16.6];                 // 层间饱和度偏移（越外层越艳）
+const SKIN_HOFF=[0,-1.0,-1.7,-1.6,-2.7];               // 层间色相偏移
+
+/* hsl → rgb（0~255） */
+function hslRgb(h,s,l){
+  s/=100; l/=100;
+  const k=n=>(n+h/30)%12, a=s*Math.min(l,1-l);
+  const f=n=>255*(l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1))));
+  return [f(0),f(8),f(4)];
+}
+/* 感知亮度（sRGB gamma 校正后的相对亮度） */
+function relLum(r,g,b){
+  const f=v=>{v/=255; return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);};
+  return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b);
+}
+/* 二分反解：给定色相/饱和度，求让感知亮度等于 target 的 L */
+function lForLum(h,s,target){
+  let lo=0, hi=100;
+  for(let i=0;i<22;i++){
+    const mid=(lo+hi)/2, c=hslRgb(h,s,mid);
+    if(relLum(c[0],c[1],c[2])<target) lo=mid; else hi=mid;
+  }
+  return (lo+hi)/2;
+}
+
 function skinFromHue(h,sat,lit){
   const s=(sat==null?hueS:sat), l=(lit==null?hueL:lit);
-  // 传入的 l 就是球体主色（core）的明度，其余层往外逐层变浅
-  SKIN.core=hsl(h,s,   cl(l,    12,88));
-  SKIN.in1 =hsl(h,s+2, cl(l+7,  18,92));
-  SKIN.in2 =hsl(h,s+4, cl(l+14, 26,94));
-  SKIN.edge=hsl(h,s+6, cl(l+22, 34,96));
-  SKIN.rim =hsl(h,s+8, cl(l+29, 44,97));
+  // 滑块给的是 core 的明度意愿，线性映射到 core 的目标感知亮度
+  const coreLum=cl(SKIN_LUM[0]*(l/56.9), 0.045, 0.60);
+  const keys=['core','in1','in2','edge','rim'];
+  for(let i=0;i<keys.length;i++){
+    const ss=cl(s+SKIN_SOFF[i],0,100);
+    SKIN[keys[i]]=hsl((h+SKIN_HOFF[i]+360)%360, ss, lForLum((h+SKIN_HOFF[i]+360)%360, ss, cl(coreLum*SKIN_LRAT[i],0.02,0.94)));
+  }
 }
 function hsl2hex(h,s,l){
   s/=100; l/=100;
@@ -256,6 +454,8 @@ function hexToHsl(hex){
 }
 const CFG={
   bodySize:24,                    // bs:24  球体直径
+  sizeK:1,                        // 大小倍率（设置里可调 50%~200%）
+  alpha:1,                        // 主角整体透明度（设置里可调 20%~100%）
   style:'ball',                   // 样式：ball 原版 / crab 龙虾
   crabLidSlant:0.011,             // 蟹眼生气斜切量：蟹眼短，斜切只占眼高约 15%（原版占 37%）
   crabScale:1.0,                  // 龙虾整体缩放
@@ -269,16 +469,48 @@ const CFG={
   bubble:12,                      // 点满这么多次 → 弹出对话框
   closeTaps:2,                    // 弹着时点几下关闭
   typeMs:95,                      // 打字机：每字间隔(ms)
-  flingHoldMs:420,                // 长按多久算「蓄力弹飞」
-  tapHitK:0.62,                   // 飞行中单击击飞的力度（相对长按弹飞）
+  /* 拖拽投掷：抓住球拖着走，松手按手速甩出去（替换原来的长按蓄力弹飞） */
+  dragMovePx:10,                  // 拖过这么多像素才算「在拖」，否则只是点一下
+  dragFlingK:1.25,                // 甩出力度倍率（相对实际手速）
+  dragFlingMax:9000,              // 甩出速度上限，防止一甩就飞没影
+  dragFollowTau:0.045,            // 拖拽跟随时间常数：越小越贴手，越大越有拖尾感
+  dragMinSpd:150,                 // 松手时球速低于这个 → 只是放下，不甩（慢慢挪不算甩）
+  /* 运动形变：沿「球真实速度」的方向拉伸，速度越大拉得越长。
+     按住不动 → 速度为 0 → 形变为 0，所以不会自己乱抖。 */
+  motionStretch:0.17,             // 最大拉伸量（沿速度方向）
+  motionSquash:0.55,              // 垂直方向的压扁比例
+  motionRefSpd:1900,              // 达到这个速度时拉伸到最大
+  motionTau:0.07,                 // 速度平滑时间常数
+  flingHoldMs:420,                // 长按多久算「蓄力」（仅用于长按关对话框）
   flingPower:8200,                // 弹飞初速度
-  flingFric:0.9945,               // 空气阻力（越接近 1 衰减越慢）
-  flingMaxMs:6500,                // 最长飞行时间，到点就回家
+  flingDrag:0.85,                 // 空气阻力系数(1/s)：v *= exp(-k·dt)
+  flingRoll:60,                   // 滚动摩擦(px/s²)：低速时也能真正停住，不是无限滑
+  flingMaxMs:9000,                // 最长飞行时间（兜底，到点就地停住，不回家）
   haloDarkBoost:2.1,              // 深色模式下彩圈对比度倍率
   haloLightBoost:1.5,             // 浅色模式下彩圈对比度倍率（白底上要更深才看得见）
   trailMs:300, trailMinSpd:520,   // 残影：存活时长 / 出现的最低速度
-  flingBounce:0.88,               // 撞墙反弹系数
-  flingHomeMs:900,                // 减速后回位时长
+  flingBounce:0.82,               // 撞墙反弹系数（能量损耗）
+  /* 撞墙特效：只保留「有方向的挤压 + 阻尼回弹」，不堆圆环和粒子。
+     花哨的特效又丑又吃性能，真正有质感的是形变本身。 */
+  impSquash:0.34,                 // 撞击瞬间沿法线压扁的最大量
+  impBulge:0.24,                  // 垂直方向鼓出的量（体积守恒感）
+  impFreq:16.5,                   // 回弹振荡频率（rad/s）
+  impDecay:0.10,                  // 振荡衰减时间常数（越小停得越快）
+  impShake:0.030,                 // 撞击余震（很轻，只在最初一瞬）
+  /* 撞击涟漪：一整片「软环带」，不是描边画出来的细线圈。
+     用径向渐变填充一个圆环区域 —— 内沿渐入、峰值偏内、外侧长尾渐出，
+     所以从内到外是连续过渡的一整片，看着是一个有厚度的圆，而不是几个圈叠在一起。 */
+  impWave:0.52,                   // 波的整体强度
+  impWaveMs:780,                  // 寿命（ms）：扩散 + 变淡的全过程
+  impWaveSpread:2.05,             // 向外扩散的距离（单位：球半径）
+  impWaveThick:0.34,              // 环带厚度（单位：球半径），越扩散摊得越开
+  impWavePeak:0.44,               // 峰值在环带内的相对位置（<0.5 → 偏内，外侧留长尾）
+  impWaveFall:0.26,               // 包络宽度：越小峰值越尖，越大过渡越平缓
+  impWaveStops:10,                // 渐变停靠点数量：越多，径向的明暗过渡越细腻
+  haloDownscale:0.55,             // 光晕元素的降采样倍率：元素按这个比例建小、再用 scale 放大到目标。
+                                  // 它是一团极淡的柔和渐变，放大采样看不出差别，
+                                  // 但光栅化面积能降 (1/0.55)² ≈ 3.3 倍 —— 这是最大的一笔开销。
+  flingStopSpd:38,                // 低于这个速度直接停下（静摩擦），避免贴边反复抖动
   baseW:5,                        // bw:5   眼宽基准
   scale:.53,                      // sc:53
   eyeAspect:2.24,                 // as:224 高宽比（细长胶囊）
@@ -340,6 +572,9 @@ const eyes={l:{lid:0}, r:{lid:0}, nextGaze:0};
 let blink={t0:-99999,dur:170,next:1400};
 let press=0, pressV=0;                          // 整体缩放：负=放大，正=缩小
 let sq=0, sqV=0;                                // 果冻形变：正=横向摊开压扁
+/* 运动形变：vx/vy 是平滑后的球真实速度，amt 是拉伸量，ang 是拉伸方向。
+   三者都由速度算出（不是由「移动方向」硬凑），所以停下来形变就自然归零。 */
+const MOTION={vx:0, vy:0, amt:0, ang:0};
 let holding=false, holdT0=-99999, popUntil=-99999, onBall=false, onBallFling=false;
 let combo=0, lastTap=-99999, rageUntil=-99999, rage=0;
 const RAGE_TAPS=5, RAGE_WINDOW=900, RAGE_COOL=2800;
@@ -347,24 +582,37 @@ const RAGE_TAPS=5, RAGE_WINDOW=900, RAGE_COOL=2800;
 const FL={x:0,y:0,vx:0,vy:0,flying:false,holdT0:-99999,charging:false,homeT:-99999,t0:-99999,lx:undefined,ly:undefined};
 const TRAIL=[];                 // 飞行残影
 const RINGS=[];                 // 撞墙冲击波
+/* 拖拽投掷：抓住球 → 跟着手指走 → 松手按手速甩出去。
+   samples 存最近一小段时间的指针轨迹，松手时用它反推真实手速。 */
+const DRAG={on:false, moved:false, offX:0, offY:0, sx:0, sy:0,
+            tx:0, ty:0, vx:0, vy:0, has:false, samples:[]};
+/* 撞击状态：ang=墙的法线方向（指向场内），str=当前形变量（带阻尼振荡，会回弹），
+   t0=撞击时刻，amp=撞击强度，x/y=撞点，spd=撞击速度 */
+const IMP={ang:0, str:0, amp:0, t0:-99999, x:0, y:0, spd:0};
 
 let totalTaps=0;                 // 对话框关闭后重新累计，再点满就再弹一次
 let bubbleIdx=-1;                // 当前显示第几段
 let bubbleShown=false;           // 是否正在显示对话框
 let bubbleT0=-99999;             // 开始显示的时间（打字机计时用）
 let closeTaps=0;                 // 显示期间点了几次 → 点两下就关
-// 文案按样式区分：圆球是原版三句，龙虾是另一套
-const LINES_BALL=[
-  '压力一个小圆球？',
-  '对不起 和 Kimi 聊天的人太多了 等会再试试吧',
-  '你好呀 我是月之暗面旗下的助手'
-];
-const LINES_CRAB=[
-  '压力一只小龙虾？',
-  'LLM request failed.',
-  '哎哎哎，我要会员才能用'
-];
+// 文案按样式区分：圆球是原版三句，龙虾是另一套；两套都能在设置里改
+const DEFAULT_LINES={
+  ball:['压力一个小圆球？',
+        '对不起 和 Kimi 聊天的人太多了 等会再试试吧',
+        '你好呀 我是月之暗面旗下的助手'],
+  crab:['压力一只小龙虾？',
+        'LLM request failed.',
+        '哎哎哎，我要会员才能用']
+};
+const LINES_BALL=DEFAULT_LINES.ball.slice();
+const LINES_CRAB=DEFAULT_LINES.crab.slice();
 function curLines(){ return styleMode==='crab' ? LINES_CRAB : LINES_BALL; }
+function curLinesArr(){
+  const a=curLines();
+  // 空输入框视为「不显示这一句」，全空则至少留一句免得没反应
+  const f=a.filter(t=>t && t.trim());
+  return f.length?f:[(styleMode==='crab'?'…':'……')];
+}
 let autoMood=null;
 const MOOD=()=>autoMood||'normal';
 
@@ -373,7 +621,19 @@ const MOOD=()=>autoMood||'normal';
    按住任何地方（不一定要在球上）→ 它盯着你的手/鼠标看；松手就恢复自己看。
    只有按在球上才算「点它」，触发果冻与生气计数。 */
 const ptr={x:0,y:0};
-window.addEventListener('pointermove',e=>{ptr.x=e.clientX;ptr.y=e.clientY;},{passive:true});
+function onMove(e){
+  ptr.x=e.clientX; ptr.y=e.clientY;
+  if(!DRAG.on) return;
+  const now=performance.now();
+  DRAG.samples.push({x:e.clientX, y:e.clientY, t:now});
+  // 只留最近一小段轨迹，甩出去的速度看的就是这段
+  while(DRAG.samples.length>2 && now-DRAG.samples[0].t>140) DRAG.samples.shift();
+  if(Math.hypot(e.clientX-DRAG.sx, e.clientY-DRAG.sy)>CFG.dragMovePx) DRAG.moved=true;
+  if(!DRAG.moved) return;
+  // 只记目标点；真正的位移由每帧的弹簧追过去，所以不管指针事件多密都是顺滑的
+  DRAG.tx=e.clientX+DRAG.offX; DRAG.ty=e.clientY+DRAG.offY;
+}
+window.addEventListener('pointermove',onMove,{passive:true});
 
 function onDown(e){
   if(panel.classList.contains('open')) return;   // 设置界面开着 → 不操作画布
@@ -383,13 +643,50 @@ function onDown(e){
   onBallFling = onBall;
   if(onBall) FL.holdT0=performance.now();
   FL.charging=onBall;
+  // 按在球上 → 进入「抓住」状态（龙虾不参与拖拽投掷，保持它自己的手感）
+  if(onBall && styleMode!=='crab'){
+    const now=performance.now();
+    DRAG.on=true; DRAG.moved=false; DRAG.sx=e.clientX; DRAG.sy=e.clientY;
+    DRAG.offX=(W*CFG.posX+FL.x)-e.clientX;
+    DRAG.offY=(H*CFG.posY+FL.y)-e.clientY;
+    DRAG.tx=W*CFG.posX+FL.x; DRAG.ty=H*CFG.posY+FL.y;
+    DRAG.vx=0; DRAG.vy=0; DRAG.has=false;
+    DRAG.samples=[{x:e.clientX, y:e.clientY, t:now}];
+    /* 飞行中按到它 → 一把接住，立刻停住（不是拍它一下让它飞更远）。
+       接住后交回手指控制：拖着走就跟手，原地松手就停在那儿。 */
+    if(FL.flying){
+      FL.flying=false; FL.vx=0; FL.vy=0; FL.homeT=now;
+      sqV += 4;                        // 接住那一下挤一下
+      TRAIL.length=0;                  // 残影立刻清掉，不然会拖着一串
+    }
+  }
   if(onBall) onTap(e);                          // 按在球上 → 点它
 }
 function onRelease(e){
   if(!holding) return;
   holding=false; onBall=false;
-  eyes.nextGaze=performance.now()+300;
   const now=performance.now();
+
+  /* 拖拽投掷：拖过就按手速甩出去。放在最前面处理 —— 后面几个分支都是 return，
+     放后面会导致 DRAG 状态残留，下一次按下就乱了。 */
+  if(DRAG.on){
+    DRAG.on=false;
+    // 用「球自己的速度」而不是手指速度 —— 拖着不动再松手就是放下，甩起来才飞
+    if(DRAG.moved && DRAG.has){
+      let vx=DRAG.vx*CFG.dragFlingK, vy=DRAG.vy*CFG.dragFlingK;
+      const sp=Math.hypot(vx,vy);
+      if(sp>CFG.dragFlingMax){ vx=vx/sp*CFG.dragFlingMax; vy=vy/sp*CFG.dragFlingMax; }
+      if(sp>=CFG.dragMinSpd){
+        FL.vx=vx; FL.vy=vy;
+        FL.flying=true; FL.homeT=-99999; FL.t0=now;
+        FL.lx=undefined; FL.ly=undefined;
+        sqV += (FL.vx+FL.vy)*0.0011;            // 甩出去那一下挤一下
+      }
+    }
+    DRAG.samples=[]; DRAG.moved=false; DRAG.has=false;
+    DRAG.vx=0; DRAG.vy=0;
+  }
+  eyes.nextGaze=now+300;
 
   // 有对话框时：长按它 → 对话框消失（不弹飞）
   if(bubbleShown){
@@ -399,38 +696,6 @@ function onRelease(e){
     return;
   }
 
-  // 已经在飞 → 轻轻一点就能把它打飞（不用长按），像拍球一样
-  if(styleMode!=='crab' && onBallFling && FL.flying){
-    let dx=(e&&e.clientX!=null?e.clientX:ptr.x)-cx0;
-    let dy=(e&&e.clientY!=null?e.clientY:ptr.y)-cy0;
-    let d=Math.hypot(dx,dy);
-    if(d < bodyR()*S*0.35){            // 手指几乎在球心 → 随机给个方向
-      const a=rand(0,Math.PI*2); dx=Math.cos(a); dy=Math.sin(a); d=1;
-    }
-    // 从手指往球心推：指哪打哪的反方向，保留部分原有速度
-    const sp=CFG.flingPower*CFG.tapHitK;
-    FL.vx=-dx/d*sp + FL.vx*0.35 + rand(-200,200);
-    FL.vy=-dy/d*sp + FL.vy*0.35 + rand(-200,200);
-    FL.homeT=-99999; FL.t0=performance.now();
-    sqV += 6;                          // 被拍一下，挤一下
-    onBallFling=false;
-    return;
-  }
-
-  // 长按球 → 蓄力弹飞（龙虾不弹飞）
-  if(styleMode!=='crab' && onBallFling && now-FL.holdT0>=CFG.flingHoldMs){
-    let dx=(e&&e.clientX!=null?e.clientX:ptr.x)-cx0;
-    let dy=(e&&e.clientY!=null?e.clientY:ptr.y)-cy0;
-    let d=Math.hypot(dx,dy);
-    if(d < bodyR()*S*0.35){            // 手指几乎在球心 → 随机给个方向
-      const a=rand(0,Math.PI*2); dx=Math.cos(a); dy=Math.sin(a); d=1;
-    }
-    // 往「手指所在方向的反方向」甩出去
-    const sp=CFG.flingPower*(0.6+0.4*Math.min(1,(now-FL.holdT0)/1200));
-    FL.vx=-dx/d*sp + rand(-260,260);
-    FL.vy=-dy/d*sp + rand(-260,260);
-    FL.flying=true; FL.homeT=-99999; FL.t0=performance.now();
-  }
   onBallFling=false;
 }
 window.addEventListener('pointerdown',onDown,{passive:true});
@@ -459,7 +724,7 @@ function onTap(e){
     // 只有不在飞的时候才累计对话框次数
     totalTaps++;
     if(totalTaps>=CFG.bubble){
-      bubbleIdx=(bubbleIdx+1)%curLines().length;  // 每次弹出换下一段
+      bubbleIdx=(bubbleIdx+1)%curLinesArr().length;  // 每次弹出换下一段
       bubbleShown=true; bubbleT0=now; closeTaps=0;
     }
   }
@@ -504,6 +769,19 @@ function step(now,dt){
   // 形变由「缩放速度」派生：动的时候被挤压，停下来就恢复正圆
   // （不再是独立弹簧，所以不会自己来回晃个不停）
   sq = clamp(pressV*CFG.jellyK, -CFG.jellyMax, CFG.jellyMax);
+
+  /* 运动形变：取自球「当前真正拥有」的速度 —— 拖着走用拖拽速度，飞出去用飞行速度。
+     平滑后再算拉伸量与方向；速度趋近 0 时拉伸量趋近 0，角度冻结不更新，
+     所以按住不动时它是稳定的，不会自己一会长一会短。 */
+  let mvx=0, mvy=0;
+  if(DRAG.on && DRAG.moved){ mvx=DRAG.vx; mvy=DRAG.vy; }
+  else if(FL.flying){ mvx=FL.vx; mvy=FL.vy; }
+  stepImpact(now,ds);
+  const mk=1-Math.exp(-ds/CFG.motionTau);
+  MOTION.vx+=(mvx-MOTION.vx)*mk; MOTION.vy+=(mvy-MOTION.vy)*mk;
+  const msp=Math.hypot(MOTION.vx,MOTION.vy);
+  MOTION.amt=clamp(msp/CFG.motionRefSpd,0,1)*CFG.motionStretch;
+  if(msp>60) MOTION.ang=Math.atan2(MOTION.vy,MOTION.vx);   // 太慢时角度无意义，保持不变
   // 怒气：起得快，消得更快（目标为 0 时几乎瞬间回落）
   const target = now<rageUntil ? 1 : 0;
   const tau = target?0.10:0.05;
@@ -557,22 +835,113 @@ function bodyR(){ return CFG.bodySize/2*(1-press); }
 
 
 /* ---------------- 弹飞物理 ---------------- */
+/* 撞墙：挤一下 + 冲击波；撞完已经很慢就直接停，不然会贴着墙一点点抖 */
+function bounceHit(now,x,y,spd){
+  sqV += (FL.vx+FL.vy)*0.0022;
+  if(spd>420){
+    const str=clamp(spd/2600,0.25,1);
+    RINGS.push({x,y,t0:now,str});
+    if(RINGS.length>4) RINGS.shift();
+    /* 撞哪面墙就朝哪个方向压：法线由反弹后的速度反推（速度刚被反向过），
+       这里用撞击点相对球心的方向更稳 —— 球撞左墙时撞点在球心左侧。 */
+    const R=CFG.bodySize/2*S;
+    let nx=0, ny=0;
+    const b=flingBounds();
+    const bx=W*CFG.posX+FL.x, by=H*CFG.posY+FL.y;
+    if(Math.abs(bx-b.minX)<Math.abs(bx-b.maxX)) nx=1; else nx=-1;
+    if(Math.abs(by-b.minY)<Math.abs(by-b.maxY)) ny=1; else ny=-1;
+    // 只取真正撞上的那个轴（撞左墙就只有 x 方向）
+    const dxL=Math.abs(bx-b.minX), dxR=Math.abs(bx-b.maxX);
+    const dyT=Math.abs(by-b.minY), dyB=Math.abs(by-b.maxY);
+    const horiz=Math.min(dxL,dxR)<=Math.min(dyT,dyB);
+    if(horiz) ny=0; else nx=0;
+    const ang=Math.atan2(ny,nx);
+    IMP.ang=ang; IMP.amp=str; IMP.t0=now; IMP.x=bx-nx*R*0.85; IMP.y=by-ny*R*0.85; IMP.spd=spd;
+  }
+  if(spd<CFG.flingStopSpd*2.5){ FL.flying=false; FL.vx=0; FL.vy=0; FL.homeT=now; }
+}
+
+/* 撞击形变：阻尼振荡 —— 先压扁、回弹时略微鼓起、再收敛回正圆。
+   纯指数衰减看着像「慢慢变回去」，有振荡才有弹性。 */
+function stepImpact(now,ds){
+  const t=(now-IMP.t0)/1000;
+  if(t<0 || t>1.2 || IMP.amp<=0){ IMP.str=0; return; }
+  const env=Math.exp(-t/CFG.impDecay);
+  IMP.str = IMP.amp * env * Math.cos(CFG.impFreq*t);
+  // 余震：撞击后极短的一下高频抖动，沿法线
+  IMP.shake = (t<0.14) ? IMP.amp*CFG.impShake*Math.exp(-t/0.045)*Math.sin(t*220) : 0;
+}
+
+/* 撞击形变 + 余震的变换（在球心局部坐标里用） */
+function applyImpactWarp(c){
+  const st=IMP.str;
+  if(Math.abs(st)>0.0008){
+    c.save();
+    c.rotate(IMP.ang);
+    const a=clamp(st,-1,1);
+    // a>0 → 沿法线压扁、垂直方向鼓出；a<0（回弹）→ 反向，形成过冲
+    c.scale(1-a*CFG.impSquash, 1+a*CFG.impBulge);
+    c.rotate(-IMP.ang);
+  }
+  if(IMP.shake){
+    c.translate(Math.cos(IMP.ang)*IMP.shake*40, Math.sin(IMP.ang)*IMP.shake*40);
+  }
+}
+function endImpactWarp(c){
+  if(Math.abs(IMP.str)>0.0008) c.restore();
+}
+
+
+/* 屏幕内的可停区域（球心） */
+function flingBounds(){
+  const R=CFG.bodySize/2*S;
+  return {minX:R*0.9, maxX:Math.max(R*0.9, W-R*0.9),
+          minY:R*0.9, maxY:Math.max(R*0.9, H-R*0.9)};
+}
+
 function stepFling(now,ds){
   // 过期清理：不管飞不飞都要跑，否则停下后残影会卡住不消失
   for(let i=TRAIL.length-1;i>=0;i--) if(now-TRAIL[i].t0>CFG.trailMs) TRAIL.splice(i,1);
   for(let i=RINGS.length-1;i>=0;i--) if(now-RINGS[i].t0>620) RINGS.splice(i,1);
-  if(!FL.flying){
-    // 不在飞：缓慢回位（用于弹完停下后归位已完成，这里只做保险衰减）
-    if(FL.x||FL.y){
-      const k=1-Math.exp(-ds/0.28);
-      FL.x+=(0-FL.x)*k; FL.y+=(0-FL.y)*k;
-      if(Math.abs(FL.x)<0.2&&Math.abs(FL.y)<0.2){FL.x=0;FL.y=0;}
-    }
+
+  /* ---- 被拖着走：球用弹簧追手指，顺滑且自带一点滞后 ----
+     这样不管指针事件多密、掉不掉帧，看起来都是连续运动。
+     同时每帧记下球的真实速度，松手时直接拿它当甩出去的初速度（最贴合手感）。 */
+  if(DRAG.on && DRAG.moved){
+    const b=flingBounds();
+    const gx=clamp(DRAG.tx, b.minX, b.maxX), gy=clamp(DRAG.ty, b.minY, b.maxY);
+    const px=W*CFG.posX+FL.x, py=H*CFG.posY+FL.y;
+    const k=1-Math.exp(-ds/CFG.dragFollowTau);
+    const nx=px+(gx-px)*k, ny=py+(gy-py)*k;
+    // 用实际位移反推速度（不是手指速度），所以"甩得快"和"球飞得快"是一致的
+    const rawVx=(nx-px)/Math.max(ds,1e-4), rawVy=(ny-py)/Math.max(ds,1e-4);
+    const sm=1-Math.exp(-ds/0.05);          // 平滑一下，避免单帧抖动
+    DRAG.vx+=(rawVx-DRAG.vx)*sm; DRAG.vy+=(rawVy-DRAG.vy)*sm;
+    DRAG.has=true;
+    FL.x=nx-W*CFG.posX; FL.y=ny-H*CFG.posY;
     return;
   }
-  const f=Math.pow(CFG.flingFric, ds*60);
-  FL.vx*=f; FL.vy*=f;
-  FL.x+=FL.vx*ds; FL.y+=FL.vy*ds;
+  if(!FL.flying) return;   // 停下后留在原地，不再往回跑
+
+  /* ---- 飞行：固定 4ms 子步积分，掉帧时也不会一步跨过边界造成跳变 ---- */
+  const sub=Math.min(8, Math.max(1, Math.ceil(ds/0.004))), hs=ds/sub;
+  const damp=Math.exp(-CFG.flingDrag*hs);
+  for(let i=0;i<sub;i++){
+    FL.vx*=damp; FL.vy*=damp;
+    const sp0=Math.hypot(FL.vx,FL.vy);
+    if(sp0>0.001){
+      const drop=Math.min(sp0, CFG.flingRoll*hs);
+      FL.vx-=FL.vx/sp0*drop; FL.vy-=FL.vy/sp0*drop;
+    }
+    FL.x+=FL.vx*hs; FL.y+=FL.vy*hs;
+    // 每个子步都做一次边界检测，高速时也不会穿墙
+    const bb=flingBounds(), cx=W*CFG.posX+FL.x, cy=H*CFG.posY+FL.y;
+    if(cx<bb.minX){ FL.x=bb.minX-W*CFG.posX; FL.vx=Math.abs(FL.vx)*CFG.flingBounce; bounceHit(now,cx,cy,Math.hypot(FL.vx,FL.vy)); }
+    if(cx>bb.maxX){ FL.x=bb.maxX-W*CFG.posX; FL.vx=-Math.abs(FL.vx)*CFG.flingBounce; bounceHit(now,cx,cy,Math.hypot(FL.vx,FL.vy)); }
+    if(cy<bb.minY){ FL.y=bb.minY-H*CFG.posY; FL.vy=Math.abs(FL.vy)*CFG.flingBounce; bounceHit(now,cx,cy,Math.hypot(FL.vx,FL.vy)); }
+    if(cy>bb.maxY){ FL.y=bb.maxY-H*CFG.posY; FL.vy=-Math.abs(FL.vy)*CFG.flingBounce; bounceHit(now,cx,cy,Math.hypot(FL.vx,FL.vy)); }
+    if(!FL.flying) break;
+  }
 
   // 残影：飞得越快留得越多
   const spd0=Math.hypot(FL.vx,FL.vy);
@@ -594,40 +963,112 @@ function stepFling(now,ds){
   for(let i=TRAIL.length-1;i>=0;i--) if(now-TRAIL[i].t0>CFG.trailMs) TRAIL.splice(i,1);
   for(let i=RINGS.length-1;i>=0;i--) if(now-RINGS[i].t0>620) RINGS.splice(i,1);
 
-  // 边界：撞到画布边缘就反弹
-  const R=CFG.bodySize/2*S, W2=W/2, H2=H/2;
-  const bx0=W*CFG.posX, by0=H*CFG.posY;
-  const lim=(v,lo,hi)=>{ if(v<lo) return lo; if(v>hi) return hi; return v; };
-  let hit=false;
-  const nx=bx0+FL.x, ny=by0+FL.y;
-  const minX=R*0.9, maxX=W-R*0.9, minY=R*0.9, maxY=H-R*0.9;
-  if(nx<minX){ FL.x=minX-bx0; FL.vx=Math.abs(FL.vx)*CFG.flingBounce; hit=true; }
-  if(nx>maxX){ FL.x=maxX-bx0; FL.vx=-Math.abs(FL.vx)*CFG.flingBounce; hit=true; }
-  if(ny<minY){ FL.y=minY-by0; FL.vy=Math.abs(FL.vy)*CFG.flingBounce; hit=true; }
-  if(ny>maxY){ FL.y=maxY-by0; FL.vy=-Math.abs(FL.vy)*CFG.flingBounce; hit=true; }
-  if(hit){
-    const spd=Math.hypot(FL.vx,FL.vy);
-    // 撞得越狠，挤得越扁、冲击波越大
-    sqV += (FL.vx+FL.vy)*0.0022;
-    if(spd>420){
-      RINGS.push({x:nx,y:ny,t0:now,str:clamp(spd/2600,0.25,1)});
-      if(RINGS.length>8) RINGS.shift();
+  // 静摩擦：速度足够小 → 就地停住，停在哪就在哪（不再回到初始位置）
+  if(FL.flying && Math.hypot(FL.vx,FL.vy)<CFG.flingStopSpd){
+    FL.flying=false; FL.vx=0; FL.vy=0; FL.homeT=now;
+  }
+  // 兜底：飞太久就地停下
+  if(FL.flying && FL.t0>0 && now-FL.t0>CFG.flingMaxMs){ FL.flying=false; FL.vx=0; FL.vy=0; }
+}
+
+/* 运动形变：绕当前中心，沿速度方向拉长、垂直方向压扁。
+   速度 = 0 时拉伸量为 0 → 等价于没变换，球就是稳定的正圆。 */
+function applyMotionWarp(c){
+  if(MOTION.amt<=0.0005) return;
+  c.rotate(MOTION.ang);
+  c.scale(1+MOTION.amt, 1-MOTION.amt*CFG.motionSquash);
+  c.rotate(-MOTION.ang);
+}
+
+/* 光晕层：三个 DOM 圆。每帧只写 transform（合成器友好），
+   背景渐变只在尺寸 / 主题 / 配色变化时重设一次。 */
+/* r = 绕圈半径，单位是「球半径的倍数」而不是像素。
+   像素值是写死的：球一缩小（点击弹簧、大小滑块、换屏幕）绕圈轨迹还是那么大，
+   光圈就会明显绕出球外 —— 这就是旋转半径比例不对的原因。用倍数才跟球同步。 */
+const HALO_D=[
+  {cL:'rgba(238,182,42,',  cD:'rgba(255,222,130,', a:.055, rs:1.055, w:0.52, ph:0.0, r:0.091},
+  {cL:'rgba(248,128,172,', cD:'rgba(255,178,212,', a:.075, rs:1.03,  w:0.79, ph:2.1, r:0.083},
+  {cL:'rgba(58,138,235,',  cD:'rgba(120,178,255,', a:.075, rs:1.01,  w:0.31, ph:4.3, r:0.076}
+];
+const haloWrap=document.getElementById('halos');
+const haloEls=[...haloWrap.querySelectorAll('i')];
+let HALO_KEY='';
+function haloStyle(d){
+  const dark=theme==='dark';
+  const col=dark?d.cD:d.cL;
+  const A=d.a*CFG.haloAlpha*(dark?CFG.haloDarkBoost:CFG.haloLightBoost);
+  return 'radial-gradient(circle, '+col+A.toFixed(3)+') 0%, '
+       + col+A.toFixed(3)+') 97%, '+col+'0) 100%)';
+}
+function updateHalos(now, cx, cy, BASE, t, sx, sy, ballR){
+  // 只有屏幕尺寸 / 配色 / 主题变了才重建位图；缩放与形变一律走 scale
+  const key=Math.round(BASE)+'|'+theme+'|'+CFG.haloAlpha+'|'+CFG.haloR+'|'+CFG.haloSway;
+  if(key!==HALO_KEY){
+    HALO_KEY=key;
+    for(let i=0;i<haloEls.length;i++){
+      const d=HALO_D[i], el=haloEls[i];
+      const rr=BASE*d.rs*CFG.haloR;   // BASE 已含降采样 → scale 负责放大到实际尺寸
+      el.style.width=Math.ceil(rr*2)+'px'; el.style.height=Math.ceil(rr*2)+'px';
+      el.style.background=haloStyle(d);
+      el.dataset.rr=rr;
     }
   }
+  const kx=sx||1, ky=sy||1;
+  /* 形变比要「相对未形变的球」来算，不能直接拿 sx ——
+     sx = RX/BASE，而 BASE 是降采样后的基准，sx 里含着 1/haloDownscale 的放大因子。
+     绕圈偏移是屏幕像素，再乘一遍它就会被放大 1.8 倍，比例再次跑掉。 */
+  const wx=(ballR>0)?(kx*BASE/ballR):1, wy=(ballR>0)?(ky*BASE/ballR):1;
+  for(let i=0;i<haloEls.length;i++){
+    const d=HALO_D[i], el=haloEls[i];
+    const rr=+el.dataset.rr||0;
+    const a=t*d.w+d.ph;
+    /* 绕圈半径 = 球半径 × d.r × 晃动系数 —— 球缩小/放大时轨迹同步缩放。
+       再乘形变比 wx/wy：球压扁时光晕跟着压扁，不会还按正圆轨迹走。 */
+    const ox=Math.cos(a)*d.r*ballR*CFG.haloSway*wx, oy=Math.sin(a)*d.r*ballR*CFG.haloSway*wy;
+    el.style.transform='translate3d('+(cx+ox-rr).toFixed(1)+'px,'+(cy+oy-rr).toFixed(1)+'px,0)'
+      + ' scale('+kx.toFixed(4)+','+ky.toFixed(4)+')';
+  }
+  if(haloWrap.style.display!=='block') haloWrap.style.display='block';
+}
+function hideHalos(){ if(haloWrap.style.display!=='none') haloWrap.style.display='none'; }
 
-  // 速度足够小 → 结束飞行，自己"飞回"原位（下面的回位衰减接管）
-  if(Math.hypot(FL.vx,FL.vy)<40 && FL.homeT<0){
-    FL.homeT=now;
+/* 球体径向渐变缓存：坐标相对球心，半径/配色不变就能复用 */
+let BG_KEY='', BG_VAL=null;
+function ballGrad(RX,RY){
+  const key=Math.round(RX)+'|'+Math.round(RY)+'|'+SKIN.core+'|'+SKIN.rim;
+  if(BG_KEY===key && BG_VAL) return BG_VAL;
+  const g=ctx.createRadialGradient(-RX*0.14,-RY*0.18,RX*0.05, 0,0,Math.max(RX,RY)*1.02);
+  g.addColorStop(0,   SKIN.core);
+  g.addColorStop(.40, SKIN.in1);
+  g.addColorStop(.72, SKIN.in2);
+  g.addColorStop(.92, SKIN.edge);
+  g.addColorStop(1,   SKIN.rim);
+  BG_KEY=key; BG_VAL=g;
+  return g;
+}
+
+/* 多边形 → Path2D 缓存。
+   龙虾有 30 多个色块多边形，原来每帧都要 new 一遍并逐点走一遍路径，
+   纯 CPU 开销。形状数据是常量，构建一次就能永久复用。 */
+const PATH_CACHE=new WeakMap();
+function polyPath(poly){
+  let p=PATH_CACHE.get(poly);
+  if(!p){ p=new Path2D(); addPoly(p,poly); PATH_CACHE.set(poly,p); }
+  return p;
+}
+function polyPathFrom(arr){
+  let p=PATH_CACHE.get(arr);
+  if(!p){
+    p=new Path2D();
+    for(const poly of arr){ const q=polyPath(poly); p.addPath(q); }
+    PATH_CACHE.set(arr,p);
   }
-  if(FL.homeT>0 && now-FL.homeT>CFG.flingHomeMs*0.35){
-    FL.flying=false; FL.vx=0; FL.vy=0;
-  }
-  // 兜底：飞太久直接回家
-  if(FL.flying && FL.t0>0 && now-FL.t0>CFG.flingMaxMs){ FL.flying=false; FL.vx=0; FL.vy=0; }
+  return p;
 }
 
 /* ---------------- 绘制 ---------------- */
 function draw(now){
+  applyLayout();
   const bs=CFG.bodySize, R=bodyR()*S;
   // 锚点用「未缩放」的半径来算，否则球变大时 cx0/cy0 会跟着往左上跑，
   // 看起来就像朝左上角缩放。现在球始终绕自己的中心缩放。
@@ -635,8 +1076,14 @@ function draw(now){
   cx0=W*CFG.posX+FL.x; cy0=H*CFG.posY+FL.y;
   ES = S*(1-press);                   // 眼睛随球一起缩
 
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle=TH().bg;ctx.fillRect(0,0,W,H);
+  // 背景是不透明的，fillRect 本身就完成了清屏，不需要再 clearRect 一遍
+  ctx.clearRect(0,0,W,H);   // 画布透明，底色由 body 提供；光晕层才能透上来
+
+  /* 整体透明度只作用于角色本身（光晕 / 残影 / 冲击波 / 主角），
+     对话框保持不透明，保证文字始终可读。 */
+  const AL=clamp(CFG.alpha,0.05,1);
+  ctx.save();
+  ctx.globalAlpha=AL;
 
   // 果冻形变：横向膨胀 / 纵向压扁（sq>0 → 扁，<0 → 长）
   // 果冻：竖向拉伸更明显（上下拉长的幅度大于横向变窄），像被拎起来又落下
@@ -646,40 +1093,18 @@ function draw(now){
   // 球底下有三个特别淡的圆：蓝、粉、黄。
   // 大小都跟球差不多，一直在轻微晃动；中心被球盖住，只在边缘透出一圈淡彩。
   if(CFG.halo && styleMode!=='crab'){   // 龙虾是还原图，不要三色光晕
-    const t=now/1000;
-    const sw=CFG.haloSway;
-    const discs=[
-      // 三个圆都跟球一样大（rs 全部 1.0），而且特别特别淡。
-      // 它们各自绕圈，转到哪边就从球边缘透出一点那边的颜色。
-      // w = 绕圈角速度（各不一样），ph = 起始相位，r = 绕圈半径
-      // 浅色底要用「偏深」的色才看得见，深底则要用「偏亮」的色
-      {cL:'rgba(238,182,42,',  cD:'rgba(255,222,130,', a:.055, rs:1.055, w:0.52, ph:0.0, r:12.0},
-      {cL:'rgba(248,128,172,', cD:'rgba(255,178,212,', a:.075, rs:1.03,  w:0.79, ph:2.1, r:11.0},
-      {cL:'rgba(58,138,235,',  cD:'rgba(120,178,255,', a:.075, rs:1.01,  w:0.31, ph:4.3, r:10.0}
-    ];
-    ctx.save();
-    ctx.translate(cx0,cy0);
-    ctx.scale(RX/BASE, RY/BASE);
-    ctx.translate(-cx0,-cy0);
-    for(const d of discs){
-      // 绕圈式：匀速圆周运动，三个圆角速度各不相同
-      const a=t*d.w+d.ph;
-      const ox=Math.cos(a)*d.r*sw;
-      const oy=Math.sin(a)*d.r*sw;
-      const rr=BASE*d.rs*CFG.haloR;
-      // 整块都是极淡的实心圆，只在最外沿 3% 淡出（保证透出的边能看见）
-      const dark=theme==='dark';
-      const col=dark?d.cD:d.cL;
-      const A=d.a*CFG.haloAlpha*(dark?CFG.haloDarkBoost:CFG.haloLightBoost);
-      const gr=ctx.createRadialGradient(cx0+ox,cy0+oy,rr*0.30, cx0+ox,cy0+oy,rr);
-      gr.addColorStop(0,   col+A.toFixed(3)+')');
-      gr.addColorStop(.97, col+A.toFixed(3)+')');
-      gr.addColorStop(1,   col+'0)');
-      ctx.fillStyle=gr;
-      ctx.beginPath();ctx.arc(cx0+ox,cy0+oy,rr,0,Math.PI*2);ctx.fill();
-    }
-    ctx.restore();
-  }
+    /* 光晕改由 DOM 层渲染（见 updateHalos）：三个大圆如果留在 canvas 里，
+       每帧要填充上百万个半透明像素，是最大的性能瓶颈；
+       交给合成器后主循环只剩三次 transform 写入。 */
+    /* 光晕位图按「未缩放」的球半径建一次固定尺寸，所有缩放（点击弹簧 + 果冻形变）
+       都交给 scale。这样 press 连续变化时不会每帧重建位图，而且光晕和球用同一个
+       (RX,RY) 形变比 —— 球压扁时光晕同步压扁，露出的边始终均匀，比例不会跑。 */
+    /* 光晕元素按 haloDownscale 建小，再靠 scale 放大到目标尺寸 ——
+       它是一团极淡的柔和渐变，放大采样肉眼看不出差别，但光栅化面积大幅下降。
+       scale 用球的 (RX,RY) 形变比，所以球压扁时光晕同步压扁，露出的边始终均匀。 */
+    const hb=CFG.bodySize/2*S*CFG.haloDownscale;
+    updateHalos(now, cx0, cy0, hb, now/1000, RX/hb, RY/hb, bodyR()*S);
+  } else hideHalos();
 
   // 飞行残影：越旧越淡越小
   for(const tr of TRAIL){
@@ -691,36 +1116,66 @@ function draw(now){
     ctx.fillStyle=SKIN.in2;
     ctx.beginPath();ctx.arc(tr.x,tr.y,rr,0,Math.PI*2);ctx.fill();
   }
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=AL;
 
-  // 撞击冲击波：从撞点扩散出去的环
-  for(const rg of RINGS){
-    const age=(now-rg.t0)/620;
-    if(age>=1) continue;
-    const e=1-Math.pow(1-age,3);
-    const rr=BASE*(0.7+e*1.5*rg.str);
-    ctx.globalAlpha=(1-age)*0.42*rg.str;
-    ctx.strokeStyle=SKIN.edge;
-    ctx.lineWidth=Math.max(1.5, BASE*0.10*(1-age)*rg.str);
-    ctx.beginPath();ctx.arc(rg.x,rg.y,rr,0,Math.PI*2);ctx.stroke();
+  /* 撞击涟漪：一整片软环带。
+     关键是用径向渐变「填充」而不是「描边」—— 描边画出来是一条细细的硬线，
+     几个叠在一起就是几个圈；填充出来的径向渐变从内沿到外沿是连续的，
+     中间没有任何硬边界，所以看着就是一个有厚度、有渐变的圆在扩散。 */
+  if(RINGS.length && styleMode!=='crab'){
+    // 必须跟球用同一个缩放基准（bodyR 已含 press），否则点击缩小时球小了波没小 → 比例失调
+    const R0=bodyR()*S;
+    for(const w of RINGS){
+      const age=(now-w.t0)/CFG.impWaveMs;
+      if(age<0 || age>=1) continue;
+      const e=1-Math.pow(1-age,2.2);                        // 扩散先快后慢
+      const rMid=R0*(0.42+e*CFG.impWaveSpread);             // 环带中心半径
+      const th=R0*CFG.impWaveThick*(0.60+age*0.85);         // 波在扩散中逐渐摊开
+      const rIn=Math.max(0.01, rMid-th), rOut=rMid+th;
+      if(rOut<=rIn+0.5) continue;
+      const a=w.str*CFG.impWave*Math.pow(1-age,1.35);       // 整体慢慢消失
+      if(a<0.004) continue;
+      /* 停靠点用高斯包络算出来，而不是手敲几个值 ——
+         手敲的折线在段与段的接缝处会有可察觉的转折，
+         高斯钟形是数学上平滑的，径向明暗是真正的连续过渡，找不到任何硬边。 */
+      const g=ctx.createRadialGradient(w.x,w.y,rIn, w.x,w.y,rOut);
+      const pk=CFG.impWavePeak, fw=CFG.impWaveFall, NS=CFG.impWaveStops;
+      const cr=toRGB(SKIN.rim), ce=toRGB(SKIN.edge);
+      for(let k=0;k<=NS;k++){
+        const t=k/NS;
+        const u=(t-pk)/fw;
+        const env=Math.exp(-u*u);                       // 钟形包络
+        const R2=Math.round(lerp(cr[0],ce[0],t));
+        const G2=Math.round(lerp(cr[1],ce[1],t));
+        const B2=Math.round(lerp(cr[2],ce[2],t));
+        g.addColorStop(t, 'rgba('+R2+','+G2+','+B2+','+env.toFixed(3)+')');
+      }
+      ctx.globalAlpha=a;
+      ctx.fillStyle=g;
+      ctx.beginPath();ctx.arc(w.x,w.y,rOut,0,Math.PI*2);ctx.fill();
+    }
   }
-  ctx.globalAlpha=1;
+  ctx.globalAlpha=AL;
 
   if(styleMode==='crab'){
     drawCrab(now);
+    ctx.restore();                 // 结束透明度作用域
     drawBubble(now);
     return;
   }
 
   // 球体：里面是深的，往边缘逐渐变浅（外面那层浅的裹着它）
-  const g=ctx.createRadialGradient(cx0-RX*0.14,cy0-RY*0.18,RX*0.05, cx0,cy0,Math.max(RX,RY)*1.02);
-  g.addColorStop(0,   SKIN.core);
-  g.addColorStop(.40, SKIN.in1);
-  g.addColorStop(.72, SKIN.in2);
-  g.addColorStop(.92, SKIN.edge);
-  g.addColorStop(1,   SKIN.rim);
-  ctx.fillStyle=g;
-  ctx.beginPath();ctx.ellipse(cx0,cy0,RX,RY,0,0,Math.PI*2);ctx.fill();
+  // 形变 = 果冻(sq，轴对齐) × 运动拉伸(沿速度方向)，两者靠矩阵自然复合
+  ctx.save();
+  ctx.translate(cx0,cy0);
+  applyMotionWarp(ctx);
+  applyImpactWarp(ctx);
+  /* 球体渐变缓存：坐标是相对球心的（已 translate），只要半径和配色不变就能复用。
+     原来每帧新建一个 5 停靠点的渐变，是仅次于光晕的第二大开销。 */
+  ctx.fillStyle=ballGrad(RX,RY);
+  ctx.beginPath();ctx.ellipse(0,0,RX,RY,0,0,Math.PI*2);ctx.fill();
+  endImpactWarp(ctx);
+  ctx.restore();
 
   // 两眼：竖向白色胶囊（矩形 + 两端半圆），贴在球面上
   const ew=eyeW();
@@ -729,6 +1184,7 @@ function draw(now){
   drawEye(-bx, CFG.eyeY, 'l', eyes.l.lid);
   drawEye( bx, CFG.eyeY, 'r', eyes.r.lid);
 
+  ctx.restore();                   // 结束透明度作用域（对话框保持清晰）
   drawBubble(now);
 }
 
@@ -864,24 +1320,24 @@ function drawCrab(now){
   /* 1. 龙虾本体：纯矢量多边形大色块，按面积从大到小铺，每层都完整覆盖自己的区域。
         层与层不会留缝，因为底层就是整只轮廓的实色，上面几层只是叠色块。
         全部硬边纯色、无渐变、无阴影 —— 和原图的扁平平涂一致。 */
-  const bp0=new Path2D(); addPoly(bp0, CRAB_SIL);
+  const bp0=polyPath(CRAB_SIL);
   ctx.lineJoin='round';
   ctx.fillStyle=P.b2; ctx.fill(bp0);                       // 红中档：铺满整只（底）
   ctx.strokeStyle=P.b2; ctx.lineWidth=0.004; ctx.stroke(bp0);
   ctx.save(); ctx.clip(bp0);
   ctx.fillStyle=P.b3; ctx.strokeStyle=P.b3; ctx.lineWidth=0.004;
-  for(const poly of CRAB_DRK){ const q=new Path2D(); addPoly(q,poly); ctx.fill(q); ctx.stroke(q); }
+  for(const poly of CRAB_DRK){ const q=polyPath(poly); ctx.fill(q); ctx.stroke(q); }
   ctx.fillStyle=P.b1; ctx.strokeStyle=P.b1; ctx.lineWidth=0.004;
-  for(const poly of CRAB_LIT){ const q=new Path2D(); addPoly(q,poly); ctx.fill(q); ctx.stroke(q); }
+  for(const poly of CRAB_LIT){ const q=polyPath(poly); ctx.fill(q); ctx.stroke(q); }
   ctx.restore();
 
   /* 2. 蓝色面罩：暗档打底 → 亮块叠上（原图蓝面罩 暗35% / 亮65%） */
-  const mp=new Path2D(); addPoly(mp, CRAB_MASK);
+  const mp=polyPath(CRAB_MASK);
   ctx.fillStyle=P.m2; ctx.fill(mp);
   ctx.strokeStyle=P.m2; ctx.lineWidth=0.004; ctx.stroke(mp);
   ctx.save(); ctx.clip(mp);
   ctx.fillStyle=P.m1; ctx.strokeStyle=P.m1; ctx.lineWidth=0.004;
-  for(const poly of CRAB_MBRK){ const q=new Path2D(); addPoly(q,poly); ctx.fill(q); ctx.stroke(q); }
+  for(const poly of CRAB_MBRK){ const q=polyPath(poly); ctx.fill(q); ctx.stroke(q); }
   ctx.restore();
 
   /* 3. 龙虾自己的黑眼：触角顶端的竖向胶囊，右上角一小块白色矩形高光，
@@ -928,7 +1384,7 @@ function roundRect(x,y,w,h,r){
 
 function bubbleBox(now){
   const fs=Math.max(16, Math.round(Math.min(W,H)*0.042));
-  const txt=curLines()[bubbleIdx]||'';
+  const txt=curLinesArr()[bubbleIdx]||'';
   ctx.font='500 '+fs+'px -apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif';
   const tw=ctx.measureText(txt).width;
   const w=clamp(tw+fs*2.2, Math.min(W*0.46, W-28), W*0.90), h=fs*3.1;
@@ -1031,13 +1487,98 @@ function setTheme(t){
 
 function openPanel(){
   panel.classList.add('open'); gear.style.transform='rotate(90deg)';
+  /* 打开：移除 inert 让控件可 Tab，同时同步 aria-hidden */
+  panel.removeAttribute('inert'); panel.setAttribute('aria-hidden','false');
 }
-function closePanel(){ panel.classList.remove('open'); gear.style.transform=''; }
+function closePanel(){
+  panel.classList.remove('open'); gear.style.transform='';
+  /* 关闭：inert + aria-hidden + CSS 的 visibility:hidden 三重保险，
+     否则面板里十几个控件仍会被 Tab 聚焦到一片看不见的按钮上 */
+  panel.setAttribute('inert',''); panel.setAttribute('aria-hidden','true');
+}
 gear.addEventListener('pointerdown',e=>e.stopPropagation());
 gear.addEventListener('click',openPanel);
 backBtn.addEventListener('click',closePanel);
-panel.addEventListener('click',e=>{ if(e.target===panel) closePanel(); });
-window.addEventListener('keydown',e=>{ if(e.key==='Escape') closePanel(); });
+/* 面板外层不拦截指针事件（要让后面的 Kimi 一直可见可戳），
+   所以关闭只走「返回」按钮和 Esc */
+window.addEventListener('keydown',e=>{
+  if(e.key!=='Escape') return;
+  if(ask.classList.contains('open')) closeAsk(); else closePanel();
+});
+
+/* ---------------- 下载 APK 桌宠 ---------------- */
+/* 用 raw 源而不是 blob 页面：blob 页是 HTML，直接下载会拿到网页而不是 apk */
+const APK_URL='https://raw.githubusercontent.com/Lty5418/Kimi/main/KimiFloat-1.8-debug.apk';
+const APK_NAME='KimiFloat-1.8-debug.apk';
+
+const ask=document.getElementById('ask');
+const askBody=document.getElementById('askBody');
+const askNo=document.getElementById('askNo');
+const askYes=document.getElementById('askYes');
+const dlBtn=document.getElementById('dlBtn');
+const ASK_HTML=askBody.innerHTML;      // 原始文案，下载结束后还原
+let askBusy=false;
+
+function openAsk(){
+  if(askBusy) return;
+  ask.classList.add('open');
+  ask.removeAttribute('inert'); ask.setAttribute('aria-hidden','false');
+  askYes.focus();
+}
+function closeAsk(force){
+  if(askBusy && !force) return;
+  ask.classList.remove('open');
+  ask.setAttribute('inert',''); ask.setAttribute('aria-hidden','true');
+  setTimeout(()=>{ askBody.innerHTML=ASK_HTML; askNo.disabled=false; askYes.disabled=false; },320);
+}
+dlBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+dlBtn.addEventListener('click',openAsk);
+askNo.addEventListener('click',()=>closeAsk());
+function saveBlob(blob){
+  const u=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=u; a.download=APK_NAME;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),5000);
+}
+const fmtB=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB';
+
+async function doDownload(){
+  if(askBusy) return;
+  askBusy=true; askNo.disabled=true; askYes.disabled=true;
+  askBody.innerHTML='<div class="prog"><div class="bar"><i id="dlBar"></i></div>'
+    +'<p class="ptxt" id="dlTxt">准备中…</p></div>';
+  const bar=document.getElementById('dlBar'), txt=document.getElementById('dlTxt');
+  try{
+    const res=await fetch(APK_URL,{mode:'cors'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const total=+(res.headers.get('content-length')||0);
+    if(res.body && total){
+      const rd=res.body.getReader(), parts=[]; let got=0;
+      for(;;){
+        const r=await rd.read();
+        if(r.done) break;
+        parts.push(r.value); got+=r.value.length;
+        bar.style.width=(got/total*100).toFixed(1)+'%';
+        txt.textContent='已下载 '+fmtB(got)+' / '+fmtB(total);
+      }
+      saveBlob(new Blob(parts));
+    }else{
+      txt.textContent='下载中…';
+      saveBlob(await res.blob());
+    }
+    bar.style.width='100%'; txt.textContent='已开始下载 ✓';
+    askBusy=false; setTimeout(()=>closeAsk(true),800);
+  }catch(err){
+    /* 拿不到流（跨域 / 网络受限）就退回浏览器直接打开，至少不会卡死在弹窗里 */
+    txt.textContent='改由浏览器下载…';
+    const a=document.createElement('a');
+    a.href=APK_URL; a.target='_blank'; a.rel='noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    askBusy=false; setTimeout(()=>closeAsk(true),1200);
+  }
+}
+askYes.addEventListener('click',doDownload);
 
 /* ---------------- 自定义颜色：三条滑块（色相 / 饱和度 / 明度） ---------------- */
 const hueR=document.getElementById('hueR'),  hueV=document.getElementById('hueV');
@@ -1078,11 +1619,66 @@ function setStyle(t){
   // 清掉飞行/放大/甩爪的残留状态，切换后干净起步
   FL.flying=false; FL.x=0; FL.y=0; FL.vx=0; FL.vy=0; FL.homeT=-99999; FL.t0=-99999;
   TRAIL.length=0; RINGS.length=0;
+  IMP.amp=0; IMP.str=0; IMP.shake=0; IMP.t0=-99999;
   press=0; pressV=0; popUntil=-99999; sq=0; sqV=0;
+  if(typeof loadLines==='function') loadLines();   // 切样式 → 文案框跟着换
 }
 [...styleSeg.children].forEach(b=>b.addEventListener('click',()=>setStyle(b.dataset.style)));
 
+/* ---------------- 大小 / 透明度 / 文案 ---------------- */
+const sizeR=document.getElementById('sizeR'), sizeV=document.getElementById('sizeV');
+const alphaR=document.getElementById('alphaR'), alphaV=document.getElementById('alphaV');
+const lineHint=document.getElementById('lineHint');
+const lineIn=[0,1,2].map(i=>document.getElementById('line'+i));
+const resetL=document.getElementById('resetL');
+
+function setSizeK(k){
+  const v=clamp(k,0.5,2);
+  CFG.sizeK=v; SIZE_K=v;
+  LS.set('size', v);
+  sizeR.value=Math.round(v*100);
+  sizeV.textContent=Math.round(v*100)+'%';
+  resize();                                  // S 由屏幕尺寸算出，必须重算
+  // 大小变了，飞行边界也跟着变，夹一下避免卡在屏幕外
+  const b=flingBounds();
+  const nx=W*CFG.posX+FL.x, ny=H*CFG.posY+FL.y;
+  FL.x=clamp(nx,b.minX,b.maxX)-W*CFG.posX;
+  FL.y=clamp(ny,b.minY,b.maxY)-H*CFG.posY;
+}
+function setAlpha(a){
+  CFG.alpha=clamp(a,0.2,1);
+  LS.set('alpha', CFG.alpha);
+  alphaR.value=Math.round(CFG.alpha*100);
+  alphaV.textContent=Math.round(CFG.alpha*100)+'%';
+}
+/* 文案：两套各自存，切样式时输入框跟着换 */
+function linesKey(){ return styleMode==='crab' ? 'lines_crab' : 'lines_ball'; }
+function loadLines(){
+  const key=linesKey(), arr=curLines();
+  const raw=LS.get(key,'');
+  const saved=raw?raw.split('\u0001'):null;
+  for(let i=0;i<3;i++){
+    arr[i]= (saved && saved[i]!==undefined) ? saved[i] : DEFAULT_LINES[styleMode][i];
+    lineIn[i].value=arr[i];
+  }
+  lineHint.textContent='狂点时依次弹出这三句（当前：'+(styleMode==='crab'?'龙虾':'原版')+'，留空则不显示）';
+}
+function saveLines(){
+  LS.set(linesKey(), curLines().join('\u0001'));
+  bubbleIdx=-1;                              // 改完立刻生效，下一次狂点就是新文案
+}
+lineIn.forEach((el,i)=>{
+  el.addEventListener('input',()=>{ curLines()[i]=el.value; saveLines(); });
+});
+resetL.addEventListener('click',()=>{
+  const arr=curLines(), d=DEFAULT_LINES[styleMode];
+  for(let i=0;i<3;i++){ arr[i]=d[i]; lineIn[i].value=d[i]; }
+  saveLines();
+});
+
 const onRange=(el,fn)=>{ el.addEventListener('input',()=>fn(+el.value)); };
+onRange(sizeR,v=>setSizeK(v/100));
+onRange(alphaR,v=>setAlpha(v/100));
 onRange(hueR,v=>{ PK.h=v; applyPicker(false); });
 onRange(satR,v=>{ PK.s=v; applyPicker(false); });
 onRange(litR,v=>{ PK.l=v; applyPicker(false); });
@@ -1094,6 +1690,10 @@ resetC.addEventListener('click',()=>{
 });
 
 const savedHSL=(LS.get('hsl','')||'').split(',');
+// 大小 / 透明度：恢复存档（setSizeK 会调 resize，要在布局稳定后跑）
+setSizeK(+LS.get('size','1')||1);
+setAlpha(+LS.get('alpha','1')||1);
+loadLines();
 
 // fix 标记要在 setHue() 之前读：setHue 自己也会写它，会覆盖掉上次的记录
 const isFixed = LS.get('fix','1')==='1';
@@ -1113,6 +1713,11 @@ let prev=0;
 function frame(now){
   const dt=prev?now-prev:16;
   prev=now;
+  // 累计掉帧约 1.2 秒才降档，太灵敏会在临界点反复抖动
+  if(dprCap>2){
+    if(dt>22){ dprSlow+=dt; if(dprSlow>1200){ dprCap=2; dprSlow=0; resize(); } }
+    else dprSlow=Math.max(0, dprSlow-dt*0.5);
+  }
   step(now,dt);
   draw(now);
   requestAnimationFrame(frame);
