@@ -20,8 +20,10 @@
     --chip:#262f3e; --chipOn:#5a95e0; --chipOnFg:#ffffff;
   }
   /* 提升到独立合成层：画布内容直接作为 GPU 纹理参与合成，不参与主线程的层树重绘 */
-  #stage{display:block;position:fixed;inset:0;z-index:1;
-    transform:translateZ(0);will-change:transform;contain:strict}
+  /* 用 left/top/right/bottom 而不是 inset:0 —— inset 简写要 Chrome 87+，
+     老内核 WebView（迅雷/部分 App 内置浏览器）不认，元素就变成 0 尺寸，整个画面空白 */
+  #stage{display:block;position:fixed;left:0;top:0;right:0;bottom:0;z-index:1;
+    transform:translateZ(0);will-change:transform;contain:layout paint style}
   .hint{position:fixed;bottom:24px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.04em;
     color:var(--muted);pointer-events:none;padding:0 20px;line-height:1.6;z-index:2}
 
@@ -36,7 +38,7 @@
   /* 设置面板：桌面右侧抽屉 / 手机底部半屏 sheet。
      关键是 #panel 本身 pointer-events:none —— 面板外的区域不做拦截，
      所以调色时左侧/上方的 Kimi 一直露着，还能顺手戳一下。 */
-  #panel{position:fixed;inset:0;z-index:10;display:flex;pointer-events:none;opacity:0;
+  #panel{position:fixed;left:0;top:0;right:0;bottom:0;z-index:10;display:flex;pointer-events:none;opacity:0;
     align-items:flex-end;justify-content:center;
     transition:opacity .30s cubic-bezier(.22,1,.36,1), visibility 0s linear .30s}
   #panel.open{opacity:1;visibility:visible;transition:opacity .30s cubic-bezier(.22,1,.36,1)}
@@ -61,11 +63,11 @@
   .sheet h2{margin:0 0 4px;font-size:21px;font-weight:600}
   /* 光晕层：三个大圆交给 DOM + CSS 合成，不进 canvas 主循环。
      原来每帧在 canvas 里填充三个大半径半透明渐变，是最大的性能瓶颈。 */
-  #halos{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  #halos{position:fixed;left:0;top:0;right:0;bottom:0;z-index:0;pointer-events:none;overflow:hidden}
   #halos i{position:absolute;left:0;top:0;border-radius:50%;display:block;
     will-change:transform;backface-visibility:hidden;transform-origin:50% 50%;
     contain:layout paint size}
-  #haloBg{position:fixed;inset:0;z-index:-1}
+  #haloBg{position:fixed;left:0;top:0;right:0;bottom:0;z-index:-1}
   .sheet .sub{margin:0 0 26px;font-size:12.5px;color:var(--muted)}
   .sec{margin-bottom:26px}
   .sec h3{margin:0 0 12px;font-size:12px;font-weight:600;letter-spacing:.08em;color:var(--muted)}
@@ -120,7 +122,7 @@
 
   /* 自制确认弹窗：不用原生 confirm，样式跟页面统一。
      关闭时 inert + visibility:hidden，否则 3 个按钮仍会被 Tab 聚焦。 */
-  #ask{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+  #ask{position:fixed;left:0;top:0;right:0;bottom:0;z-index:20;display:flex;align-items:center;justify-content:center;
     padding:24px;opacity:0;pointer-events:none;
     background:rgba(10,20,40,.34);backdrop-filter:blur(2px);
     transition:opacity .26s cubic-bezier(.22,1,.36,1), visibility 0s linear .26s;
@@ -149,7 +151,10 @@
   .pbtn:active{transform:scale(.985)}
   .pbtn b{font-size:14px;font-weight:600}
   .pbtn span{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
-  .pbtn.on{border-color:var(--chipOn);background:color-mix(in srgb, var(--chipOn) 12%, var(--chip))}
+  .pbtn.on{border-color:var(--chipOn);background:rgba(74,134,216,.12)}
+  @supports (background: color-mix(in srgb, red 10%, blue)){
+    .pbtn.on{background:color-mix(in srgb, var(--chipOn) 12%, var(--chip))}
+  }
   #ask .prog{margin:0 0 18px}
   #ask .bar{height:5px;border-radius:3px;background:var(--chip);overflow:hidden}
   #ask .bar i{display:block;height:100%;width:0;border-radius:3px;background:var(--chipOn);
@@ -284,7 +289,22 @@
    alpha:true     → 画布透明，让 DOM 光晕层从下面透上来（见 #halos）
    不设 willReadFrequently → 否则 Chrome 会强制回退到 CPU 光栅化，白白丢掉 GPU */
 const cv=document.getElementById('stage');
-const ctx=cv.getContext('2d',{alpha:true, desynchronized:true, willReadFrequently:false});
+/* 上下文选项按「兼容性优先」降级：
+   desynchronized（低延迟）在部分 App 内置 WebView 上会让画布不参与合成、整块空白；
+   它的收益本来也只是 marginal，所以只在拿不到普通上下文时才尝试，且失败即退回。 */
+function get2d(el){
+  try{ return el.getContext('2d',{alpha:true, willReadFrequently:false}); }catch(e){}
+  try{ return el.getContext('2d',{alpha:true}); }catch(e){}
+  try{ return el.getContext('2d'); }catch(e){}
+  return null;
+}
+let ctx=get2d(cv);
+if(!ctx){
+  // 实在拿不到就给个提示，别留一块白屏
+  document.body.insertAdjacentHTML('afterbegin',
+    '<p style="position:fixed;left:0;right:0;top:44%;text-align:center;'
+    +'font:14px system-ui;color:#888">当前浏览器不支持 Canvas 2D，无法显示</p>');
+}
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
@@ -315,6 +335,28 @@ function resize(){
    面板打开时主角主动让位（竖屏上移、横屏左移），保证调色时它是完整露着的。
    位置用缓动逼近目标，不会硬跳。 */
 let posXCur=null, posYCur=null;
+
+/* 把「拖拽偏移」夹回屏幕内。
+   FL.x / FL.y 是相对基准点(posX,posY)的偏移量 —— 基准点一动（开面板让位、
+   转屏、改窗口大小），同样的偏移量就会把球顶到屏幕外，
+   表现为「整个球不见了，只剩背后三个光圈」（光圈跟随的是同一个坐标）。
+   所以基准点每次变化后都要重新夹一次。 */
+function clampFlightOffset(fullyVisible){
+  if(typeof FL==='undefined' || !FL || !CFG || !W) return;
+  const R=CFG.bodySize/2*S;
+  const m=fullyVisible ? R*1.04 : R*0.9;      // 让位时要整只露出来，正常时允许贴边
+  const minX=m, maxX=Math.max(m, W-m);
+  const minY=m, maxY=Math.max(m, H-m);
+  const cx=W*CFG.posX+FL.x, cy=H*CFG.posY+FL.y;
+  const nx=clamp(cx,minX,maxX), ny=clamp(cy,minY,maxY);
+  if(nx!==cx || ny!==cy){
+    FL.x=nx-W*CFG.posX; FL.y=ny-H*CFG.posY;
+    /* 被挤回来就别再往墙里冲了，否则会贴着边缘反复弹 */
+    if(nx!==cx && ((cx<minX && FL.vx<0)||(cx>maxX && FL.vx>0))) FL.vx*=-CFG.flingBounce;
+    if(ny!==cy && ((cy<minY && FL.vy<0)||(cy>maxY && FL.vy>0))) FL.vy*=-CFG.flingBounce;
+  }
+}
+
 function applyLayout(){
   const open=typeof panel!=='undefined' && panel.classList.contains('open');
   let tX,tY,tBX,tBY;
@@ -323,8 +365,10 @@ function applyLayout(){
   if(posXCur===null){ posXCur=tX; posYCur=tY; }
   else { posXCur+=(tX-posXCur)*0.12; posYCur+=(tY-posYCur)*0.12; }
   CFG.posX=posXCur; CFG.posY=posYCur; CFG.bubbleX=tBX; CFG.bubbleY=tBY;
+  clampFlightOffset(open);
 }
-window.addEventListener('resize',resize);resize();
+window.addEventListener('resize',()=>{ resize(); clampFlightOffset(panel && panel.classList.contains('open')); });
+resize();
 
 /* 平滑矢量绘制：坐标即屏幕像素，无像素网格量化 */
 const sx=x=>cx0+x*S, sy=y=>cy0+y*S;
@@ -1016,13 +1060,16 @@ let HALO_KEY='';
 function haloStyle(d){
   const dark=theme==='dark';
   const col=dark?d.cD:d.cL;
-  const A=d.a*CFG.haloAlpha*(dark?CFG.haloDarkBoost:CFG.haloLightBoost);
+  /* 必须乘上「主角透明度」：光晕是独立的 DOM 元素，不吃 canvas 的 globalAlpha。
+     否则把透明度拉低时球淡出了、三个光圈仍是满的 —— 看着就像球整个没了只剩光圈。 */
+  const A=d.a*CFG.haloAlpha*clamp(CFG.alpha,0.05,1)*(dark?CFG.haloDarkBoost:CFG.haloLightBoost);
   return 'radial-gradient(circle, '+col+A.toFixed(3)+') 0%, '
        + col+A.toFixed(3)+') 97%, '+col+'0) 100%)';
 }
 function updateHalos(now, cx, cy, BASE, t, sx, sy, ballR){
   // 只有屏幕尺寸 / 配色 / 主题变了才重建位图；缩放与形变一律走 scale
-  const key=Math.round(BASE)+'|'+theme+'|'+CFG.haloAlpha+'|'+CFG.haloR+'|'+CFG.haloSway;
+  const key=Math.round(BASE)+'|'+theme+'|'+CFG.haloAlpha+'|'+CFG.haloR+'|'+CFG.haloSway
+        +'|'+Math.round(clamp(CFG.alpha,0.05,1)*100);
   if(key!==HALO_KEY){
     HALO_KEY=key;
     for(let i=0;i<haloEls.length;i++){
@@ -1755,19 +1802,107 @@ if(!isFixed && savedHSL.length===3 && !isNaN(+savedHSL[0])){
 
 /* ---------------- 主循环 ---------------- */
 let prev=0;
+/* 兼容兜底：某些 App 内置浏览器（迅雷等）用的 WebView 内核较老，
+   可能不支持某个 API 而让整帧绘制抛错 —— 表现为「球没了」，只剩背景。
+   所以主绘制一旦连续出错就切到最小路径（纯圆 + 两只眼），保证主角永远在。 */
+let SAFE=false, drawErr=0, SAFE_T=0;
+function safeDraw(now){
+  if(!ctx) return;
+  if(!W || !H) resize();
+  ctx.clearRect(0,0,W,H);
+  const R=Math.max(40, Math.min(W,H)*0.26);
+  /* posX/posY 是 draw() 里的 applyLayout() 赋的；主绘制一旦抛错它们就还没算，
+     直接读会得到 NaN → arc 画不出来。所以这里要自己兜底取默认值。 */
+  const px=(typeof CFG.posX==='number'&&isFinite(CFG.posX))?CFG.posX:0.5;
+  const py=(typeof CFG.posY==='number'&&isFinite(CFG.posY))?CFG.posY:0.5;
+  const al=(typeof CFG.alpha==='number'&&isFinite(CFG.alpha))?CFG.alpha:1;
+  const ox=(typeof FL!=='undefined'&&FL&&isFinite(FL.x))?FL.x:0;
+  const oy=(typeof FL!=='undefined'&&FL&&isFinite(FL.y))?FL.y:0;
+  const cx=W*px+ox, cy=H*py+oy;
+  const g=ctx.createRadialGradient(cx,cy,R*0.1,cx,cy,R);
+  g.addColorStop(0,'#4a86d8'); g.addColorStop(1,'#8cb9f0');
+  ctx.globalAlpha=clamp(al,0.05,1);
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#ffffff';
+  for(const sx of [-1,1]){
+    ctx.beginPath();
+    ctx.ellipse(cx+sx*R*0.30, cy-R*0.06, R*0.15, R*0.20, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+/* 一次性自检：确认画布真的画上了东西，否则说明它没参与合成（老内核 WebView）。
+   注意两点，否则会误判成「白屏」而永久切到最丑的兜底球：
+   1) 不能只抽查基准点 —— 球被拖走后基准点是空的，会被错判成白屏；
+      所以整块画布抽样统计，只要有任何一处不透明就算正常。
+   2) 必须连续多次都空才判定，且切换前先尝试自愈（重建画布尺寸），
+      因为某些浏览器首帧/切后台时画布会短暂为空。 */
+let wdN=0, wdTimer=0;
+function canvasHasPaint(){
+  try{
+    if(!ctx || !W || !H || !cv.width || !cv.height) return true;   // 拿不到就当正常，别误伤
+    const d=ctx.getImageData(0,0,cv.width,cv.height).data;
+    for(let i=3;i<d.length;i+=4*16){ if(d[i]>8) return true; }     // 每 16 像素抽一个
+    return false;
+  }catch(e){ return true; }                                        // 读不到（tainted）也算正常
+}
+function watchdog(){
+  if(SAFE) return;
+  if(canvasHasPaint()){ wdN=0; return; }
+  wdN++;
+  if(wdN===1){                       // 第一次空 → 先自愈：重设画布尺寸再给一帧机会
+    try{ resize(); }catch(e){}
+    if(wdTimer) clearTimeout(wdTimer);
+    wdTimer=setTimeout(watchdog,700);
+    return;
+  }
+  if(wdN>=2){
+    SAFE=true;
+    console.warn('[kimi] 画布持续为空，已切换最小绘制');
+  }
+}
+
 function frame(now){
   const dt=prev?now-prev:16;
   prev=now;
+  if(!W || !H) resize();          // 有些浏览器首帧还没布局好，尺寸会是 0
   // 累计掉帧约 1.2 秒才降档，太灵敏会在临界点反复抖动
   if(dprCap>2){
     if(dt>22){ dprSlow+=dt; if(dprSlow>1200){ dprCap=2; dprSlow=0; resize(); } }
     else dprSlow=Math.max(0, dprSlow-dt*0.5);
   }
-  step(now,dt);
-  draw(now);
+  if(SAFE){
+    /* 兜底是「暂时降级」而不是终局：每 2.5 秒重试一次完整绘制，
+       一旦成功就自动恢复正常。避免偶发异常把用户永久困在那个最丑的球上。 */
+    if(now-(SAFE_T||0)>2500){
+      SAFE_T=now;
+      try{ step(now,dt); draw(now); }
+      catch(e){ SAFE=true; try{ safeDraw(now); }catch(e2){} }
+      if(canvasHasPaint()){ SAFE=false; console.warn('[kimi] 绘制已恢复'); }
+      requestAnimationFrame(frame); return;
+    }
+    try{ safeDraw(now); }catch(e){}
+  }else{
+    try{
+      step(now,dt);
+      draw(now);
+    }catch(e){
+      drawErr++;
+      if(drawErr===1) console.warn('[kimi] 绘制失败：', e);
+      if(drawErr>2) SAFE=true;    // 连续出错 → 永久切最小路径
+      try{ safeDraw(now); }catch(e2){}
+    }
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+/* 开局 2.5 秒后自检一次（太早可能还没画），不通过会自行重试 */
+setTimeout(watchdog, 2500);
+/* 从后台切回来时画布可能被丢弃，补一次自检 */
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && !SAFE){ wdN=0; setTimeout(watchdog,600); }
+});
 })();
 </script>
 </body>
